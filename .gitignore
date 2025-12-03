@@ -1,0 +1,26 @@
+# Downloaded libraries
+demo/stb/
+demo/libpng/
+demo/filament/
+
+# Build outputs
+build/
+build_final/build_stb/
+build_final/build_libpng/
+build_final/build_filament/
+
+# Compiled binaries
+*.so
+*.o
+*.a
+
+# Test outputs
+/tmp/
+
+# Editor
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store

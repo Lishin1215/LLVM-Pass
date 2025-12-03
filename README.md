@@ -71,8 +71,8 @@ Tested on AWS Graviton3 (ARM Neoverse V1), processing 10 PNG images with bilinea
 
 ### Performance Summary
 
-| Library  | -O3 (baseline) | ArmPL | Pass + ArmPL | Speedup |
-|----------|----------------|-------|--------------|---------|
+| Library  | -O3 -ffast-math | -O3 -ffast-math + ArmPL | -O3 -ffast-math + ArmPL + Pass | Speedup |
+|----------|-----------------|-------------------------|--------------------------------|---------|
 | STB      | 3.11s | 2.92s | **2.66s** | **14.7%** |
 | Filament | 2.83s | 2.57s | **2.40s** | **15.4%** |
 | libpng   | 39.57s | 39.70s | **37.86s** | **4.3%** |
@@ -80,24 +80,24 @@ Tested on AWS Graviton3 (ARM Neoverse V1), processing 10 PNG images with bilinea
 ### Detailed Metrics
 
 #### STB Image Library
-| Metric | -O3 | ArmPL | Pass + ArmPL |
-|--------|-----|-------|--------------|
+| Metric | -O3 -ffast-math | -O3 -ffast-math + ArmPL | -O3 -ffast-math + ArmPL + Pass |
+|--------|-----------------|-------------------------|--------------------------------|
 | Time | 3.11s | 2.92s | 2.66s |
 | Cycles | 7.73B | 7.26B | 6.61B |
 | Instructions | 23.4B | 20.9B | 19.6B |
 | IPC | 3.02 | 2.87 | 2.97 |
 
 #### Filament (Google's PBR Engine)
-| Metric | -O3 | ArmPL | Pass + ArmPL |
-|--------|-----|-------|--------------|
+| Metric | -O3 -ffast-math | -O3 -ffast-math + ArmPL | -O3 -ffast-math + ArmPL + Pass |
+|--------|-----------------|-------------------------|--------------------------------|
 | Time | 2.83s | 2.57s | 2.40s |
 | Cycles | 7.04B | 6.39B | 5.95B |
 | Instructions | 21.8B | 18.0B | 16.9B |
 | IPC | 3.09 | 2.81 | 2.84 |
 
 #### libpng
-| Metric | -O3 | ArmPL | Pass + ArmPL |
-|--------|-----|-------|--------------|
+| Metric | -O3 -ffast-math | -O3 -ffast-math + ArmPL | -O3 -ffast-math + ArmPL + Pass |
+|--------|-----------------|-------------------------|--------------------------------|
 | Time | 39.57s | 39.70s | 37.86s |
 | Cycles | 98.6B | 98.9B | 94.2B |
 | Instructions | 301.7B | 299.3B | 291.3B |

@@ -20,8 +20,9 @@ using namespace llvm;
 // [Part 2] MathOpt - pow(x, gamma) -> exp(gamma * log(x)) vectorization
 // ============================================================================
 
-// Helper: Check if the gamma value is supported
-static bool isSupportedGamma(double ExpVal) {
+// Helper: Check if gamma is supported and build log-exp transform if valid
+// Returns the transformed IR value if gamma is supported, nullptr otherwise
+static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, Value *Exponent, double ExpVal) {
     // Common gamma values
     const double gammas[] = {
         2.2, 1.0/2.2,      // sRGB / Rec.709
@@ -31,17 +32,20 @@ static bool isSupportedGamma(double ExpVal) {
         1.0/3.0            // CIE Lab cube root
     };
     
+    // Check if gamma is supported
+    bool isSupported = false;
     for (double g : gammas) {
-        if (fabs(ExpVal - g) < 0.001)
-            return true;
+        if (fabs(ExpVal - g) < 0.001) {
+            isSupported = true;
+            break;
+        }
     }
-    return false;
-}
-
-// Helper: Transform pow(x, exp) to exp(exp * log(x))
-static Value *buildLogExpTransform(IRBuilder<> &B, Module *M, Value *X, Value *Exponent) {
-    Type *Ty = X->getType();
     
+    if (!isSupported)
+        return nullptr;
+    
+    // Build log-exp transformation: exp(gamma * log(x))
+    Type *Ty = X->getType();
     Function *LogFn = Intrinsic::getDeclaration(M, Intrinsic::log, {Ty});
     Function *ExpFn = Intrinsic::getDeclaration(M, Intrinsic::exp, {Ty});
     
@@ -75,12 +79,6 @@ static bool optimizeMathFunctions(Function &F) {
 
             if (CI->arg_size() != 2) continue;
 
-            // Skip already vectorized pow - transformation would make it slower
-            if (CI->getType()->isVectorTy()) {
-                errs() << "  [MathOpt] Skipping already vectorized pow (would be slower)\n";
-                continue;
-            }
-
             // Check for fast-math flags
             FastMathFlags FMF;
             if (auto *FPMO = dyn_cast<FPMathOperator>(CI))
@@ -104,13 +102,13 @@ static bool optimizeMathFunctions(Function &F) {
             if (auto *Cast = dyn_cast<FPExtInst>(Exponent))
                 GammaSource = Cast->getOperand(0);
 
-            bool shouldOptimize = false;
             double ExpVal = 0.0;
+            Value *Result = nullptr;
 
             // Try 1: Direct constant
             if (auto *Kc = dyn_cast_or_null<ConstantFP>(GammaSource->stripPointerCasts())) {
                 ExpVal = Kc->getValueAPF().convertToDouble();
-                shouldOptimize = isSupportedGamma(ExpVal);
+                Result = tryBuildGammaTransform(Builder, M, X, Exponent, ExpVal);
             }
             // Try 2: Load from global variable (LLVM won't constant-propagate these)
             else if (auto *Ld = dyn_cast<LoadInst>(GammaSource)) {
@@ -118,8 +116,8 @@ static bool optimizeMathFunctions(Function &F) {
                     if (GV->hasInitializer()) {
                         if (auto *InitC = dyn_cast<ConstantFP>(GV->getInitializer())) {
                             ExpVal = InitC->getValueAPF().convertToDouble();
-                            shouldOptimize = isSupportedGamma(ExpVal);
-                            if (shouldOptimize) {
+                            Result = tryBuildGammaTransform(Builder, M, X, Exponent, ExpVal);
+                            if (Result) {
                                 errs() << "  [MathOpt] Found global gamma @" << GV->getName() 
                                        << " = " << ExpVal << "\n";
                             }
@@ -128,9 +126,7 @@ static bool optimizeMathFunctions(Function &F) {
                 }
             }
 
-            if (shouldOptimize) {
-                // Use log+exp transformation (high precision + vectorization friendly)
-                Value *Result = buildLogExpTransform(Builder, M, X, Exponent);
+            if (Result) {
                 errs() << "  [MathOpt] pow(x, " << ExpVal << ") → exp(" << ExpVal 
                        << "*log(x)) [vectorizable]\n";
                 Replacements.push_back({&I, Result});
@@ -189,14 +185,11 @@ llvmGetPassPluginInfo() {
                     return false;
                 });
 
-            // 2. Auto-inject into optimization pipeline (O3)
-            // e.g. clang -O3 -passes=default,img-opt
+            // 2. Auto-inject into optimization pipeline (all levels)
             PB.registerVectorizerStartEPCallback(
                 [](FunctionPassManager &FPM, OptimizationLevel Level) {
-                    if ( Level == OptimizationLevel::O3) {
-                        errs() << "[ImgOptPass] Injecting into pipeline (vectorizer-start)\n";
-                        FPM.addPass(ImgOptPass());
-                    }
+                    errs() << "[ImgOptPass] Injecting into pipeline (vectorizer-start)\n";
+                    FPM.addPass(ImgOptPass());
                 });
         }
     };

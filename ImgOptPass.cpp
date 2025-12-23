@@ -22,14 +22,11 @@ using namespace llvm;
 
 // Helper: Check if gamma is supported and build log-exp transform if valid
 // Returns the transformed IR value if gamma is supported, nullptr otherwise
-static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, Value *Exponent, double ExpVal) {
+static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, double ExpVal) {
     // Common gamma values
     const double gammas[] = {
-        2.2, 1.0/2.2,      // sRGB / Rec.709
-        2.4, 1.0/2.4,      // Adobe RGB
-        1.8, 1.0/1.8,      // Apple RGB
-        1.2,               // Gamma encoding
-        1.0/3.0            // CIE Lab cube root
+        2.2, 1.0/2.2,      
+        2.4, 1.0/2.4,  
     };
     
     // Check if gamma is supported
@@ -46,11 +43,13 @@ static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, Value 
     
     // Build log-exp transformation: exp(gamma * log(x))
     Type *Ty = X->getType();
+
     Function *LogFn = Intrinsic::getDeclaration(M, Intrinsic::log, {Ty});
-    Function *ExpFn = Intrinsic::getDeclaration(M, Intrinsic::exp, {Ty});
-    
     Value *LogX = B.CreateCall(LogFn, {X}, "log_step");
-    Value *MulVal = B.CreateFMul(LogX, Exponent, "mul_step");
+    
+    Value *MulVal = B.CreateFMul(LogX, ConstantFP::get(Ty, ExpVal), "mul_step");
+
+    Function *ExpFn = Intrinsic::getDeclaration(M, Intrinsic::exp, {Ty});
     Value *Result = B.CreateCall(ExpFn, {MulVal}, "exp_step");
     
     return Result;
@@ -69,54 +68,45 @@ static bool optimizeMathFunctions(Function &F) {
             auto *CI = dyn_cast<CallInst>(&I);
             if (!CI) continue;
 
-            Function *Callee = CI->getCalledFunction();
-            if (!Callee) continue;
+            // Check for fast-math flags
+            if (!CI->isFast()) {
+                errs() << "  [MathOpt] Skipping pow - no fast-math flags\n";
+                continue;
+            }
 
-            StringRef Name = Callee->getName();
+            StringRef Name = CI->getCalledFunction()->getName();
             if (!(Name.contains("pow") || Name.contains("powf") ||
                   Name.contains("llvm.pow")))
                 continue;
 
             if (CI->arg_size() != 2) continue;
 
-            // Check for fast-math flags
-            FastMathFlags FMF;
-            if (auto *FPMO = dyn_cast<FPMathOperator>(CI))
-                FMF = FPMO->getFastMathFlags();
-            
-            if (!FMF.isFast()) {
-                errs() << "  [MathOpt] Skipping pow - no fast-math flags\n";
-                continue;
-            }
-
-            Builder.SetInsertPoint(&I);
-            Builder.setFastMathFlags(FMF);
-            
             Value *X = CI->getOperand(0);
             Value *Exponent = CI->getOperand(1);
 
-            // Unified gamma value extraction logic
-            Value *GammaSource = Exponent;
-            
-            // Strip fpext if exists
+            // special case: unwrap FPExt if exists
             if (auto *Cast = dyn_cast<FPExtInst>(Exponent))
-                GammaSource = Cast->getOperand(0);
+                Exponent = Cast->getOperand(0);
 
             double ExpVal = 0.0;
             Value *Result = nullptr;
 
+            // Setup builder before generating new instructions
+            Builder.SetInsertPoint(&I);
+            Builder.setFastMathFlags(CI->getFastMathFlags());
+
             // Try 1: Direct constant
-            if (auto *Kc = dyn_cast_or_null<ConstantFP>(GammaSource->stripPointerCasts())) {
+            if (auto *Kc = dyn_cast<ConstantFP>(Exponent)) {
                 ExpVal = Kc->getValueAPF().convertToDouble();
-                Result = tryBuildGammaTransform(Builder, M, X, Exponent, ExpVal);
+                Result = tryBuildGammaTransform(Builder, M, X, ExpVal);
             }
-            // Try 2: Load from global variable (LLVM won't constant-propagate these)
-            else if (auto *Ld = dyn_cast<LoadInst>(GammaSource)) {
+            // Try 2: Load from global variable
+            else if (auto *Ld = dyn_cast<LoadInst>(Exponent)) {
                 if (auto *GV = dyn_cast<GlobalVariable>(Ld->getPointerOperand())) {
                     if (GV->hasInitializer()) {
                         if (auto *InitC = dyn_cast<ConstantFP>(GV->getInitializer())) {
                             ExpVal = InitC->getValueAPF().convertToDouble();
-                            Result = tryBuildGammaTransform(Builder, M, X, Exponent, ExpVal);
+                            Result = tryBuildGammaTransform(Builder, M, X, ExpVal);
                             if (Result) {
                                 errs() << "  [MathOpt] Found global gamma @" << GV->getName() 
                                        << " = " << ExpVal << "\n";
@@ -185,11 +175,13 @@ llvmGetPassPluginInfo() {
                     return false;
                 });
 
-            // 2. Auto-inject into optimization pipeline (all levels)
+            // 2. Auto-inject into optimization pipeline (O3 only)
             PB.registerVectorizerStartEPCallback(
                 [](FunctionPassManager &FPM, OptimizationLevel Level) {
-                    errs() << "[ImgOptPass] Injecting into pipeline (vectorizer-start)\n";
-                    FPM.addPass(ImgOptPass());
+                    if (Level == OptimizationLevel::O3) {
+                        errs() << "[ImgOptPass] Injecting into pipeline (vectorizer-start, O3)\n";
+                        FPM.addPass(ImgOptPass());
+                    }
                 });
         }
     };

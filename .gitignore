@@ -5,17 +5,28 @@ demo/filament/
 
 # Build outputs
 build/
-build_final/build_stb/
-build_final/build_libpng/
-build_final/build_filament/
+build_final/
+build_demo/build_stb/
+build_demo/build_libpng/
+build_demo/build_filament/
 
 # Compiled binaries
 *.so
 *.o
 *.a
+*.out
 
-# Test outputs
-/tmp/
+# Executables (demo)
+build_demo/build_*/*
+!build_demo/build_*/.*
+
+# LLVM IR and temp files
+*.ll
+*_demo.c
+*_ir.c
+test_*.c
+*\ copy.*
+ir_screenshots/
 
 # Editor
 .vscode/
@@ -24,3 +35,6 @@ build_final/build_filament/
 
 # OS
 .DS_Store
+
+# Test outputs
+/tmp/

@@ -21,7 +21,7 @@ using namespace llvm;
 // ============================================================================
 
 // 判斷是不是2.2, 1/2.2, 2.4, 1/2.4
-// 生成IR 
+// 生成 + 插入IR 
 static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, double ExpVal) {
     // [0] 列出支援的gamma值
     const double gammas[] = {
@@ -43,14 +43,14 @@ static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, double
     
     Type *Ty = X->getType();
 
-    // [1] log(x)
+    // [1] 生成＋插入 log(x) 的IR
     Function *LogFn = Intrinsic::getDeclaration(M, Intrinsic::log, {Ty});
     Value *LogX = B.CreateCall(LogFn, {X}, "log_step");
     
-    // [2] log(x)*2.2 ---> Mul(log(x),2.2)
+    // [2] 生成＋插入 log(x)*2.2 ---> Mul(log(x),2.2) 的IR
     Value *MulVal = B.CreateFMul(LogX, ConstantFP::get(Ty, ExpVal), "mul_step");
 
-    // [3] exp(Mul(log(x),2.2))
+    // [3] 生成＋插入 exp(Mul(log(x),2.2)) 的IR
     Function *ExpFn = Intrinsic::getDeclaration(M, Intrinsic::exp, {Ty});
     Value *Result = B.CreateCall(ExpFn, {MulVal}, "exp_step");
     
@@ -58,8 +58,8 @@ static Value *tryBuildGammaTransform(IRBuilder<> &B, Module *M, Value *X, double
 }
 
 // check every instruction (IR), 抓出 指數 是“常數”或“global variable”的pow
-// 生成 "新的IR"（exp + log）
-// 替換 "舊的IR" (pow)
+// 生成+插入 "新的IR"（exp + log）
+// 刪除 "舊的IR" (pow): (1) usage (2) IR本身
 // 返回 "IR有沒有改"
 static bool optimizeMathFunctions(Function &F) {
     bool Changed = false;
@@ -109,7 +109,7 @@ static bool optimizeMathFunctions(Function &F) {
             if (auto *Kc = dyn_cast<ConstantFP>(Exponent)) {
                 // [7]
                 ExpVal = Kc->getValueAPF().convertToDouble();
-                Result = tryBuildGammaTransform(Builder, M, X, ExpVal); // （上面的function）生成 新的IR
+                Result = tryBuildGammaTransform(Builder, M, X, ExpVal); // （上面的function）生成+插入 新的IR
                 if (Result) {
                     errs() << "  [MathOpt] Found const gamma @" << Kc->getName() 
                             << " = " << ExpVal << "\n";
@@ -121,7 +121,7 @@ static bool optimizeMathFunctions(Function &F) {
                     if (GV->hasInitializer()) { // 確認有無"初始值" (ex. #define gamma 1.3)
                         if (auto *InitC = dyn_cast<ConstantFP>(GV->getInitializer())) {
                             ExpVal = InitC->getValueAPF().convertToDouble();
-                            Result = tryBuildGammaTransform(Builder, M, X, ExpVal); // （上面的function）生成 新的IR
+                            Result = tryBuildGammaTransform(Builder, M, X, ExpVal); // （上面的function）生成+插入 新的IR
                             if (Result) {
                                 errs() << "  [MathOpt] Found global gamma @" << GV->getName() 
                                        << " = " << ExpVal << "\n";
@@ -140,7 +140,7 @@ static bool optimizeMathFunctions(Function &F) {
             } 
         }
 
-    // 替換成“新的LLVM IR”
+    // 刪除“舊的LLVM IR” (1)usage (2)舊IR本身
     for (auto &P : Replacements) {
         Instruction *Old = P.first;
         Value *NewV = P.second;
